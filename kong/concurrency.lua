@@ -27,26 +27,31 @@ function concurrency.with_worker_mutex(opts, fn)
     timeout = timeout,
   })
   if not rlock then
-    return nil, "failed to create worker lock: " .. err
+    return nil, "failed to create worker lock: " .. err, "lock"
   end
 
   -- acquire lock
   local elapsed, err = rlock:lock(opts.name)
   if not elapsed then
     if err == "timeout" then
-      return nil, err
+      return nil, err, "timeout"
     end
-    return nil, "failed to acquire worker lock: " .. err
+    return nil, "failed to acquire worker lock: " .. err, "lock"
   end
 
   local pok, ok, err = pcall(fn, elapsed)
-  if not pok then
-    err = ok
-    ok = nil
-  end
 
   -- release lock
   rlock:unlock(opts.name)
+
+  if not pok then
+    return nil, ok, "pcall"
+  end
+
+  if not ok then
+    return ok, err, "call"
+  end
+
   return ok, err
 end
 
@@ -86,13 +91,14 @@ function concurrency.with_coroutine_mutex(opts, fn)
   local lok, err = semaphore:wait(timeout)
   if not lok then
     if err ~= "timeout" then
-      return nil, "error attempting to acquire " .. opts.name .. " lock: " .. err
+      return nil, "error attempting to acquire " ..
+                  opts.name .. " lock: " .. err, "lock"
     end
 
     if opts.on_timeout == "run_unlocked" then
       kong.log.warn("bypassing ", opts.name, " lock: timeout")
     else
-      return nil, "timeout acquiring " .. opts.name .. " lock"
+      return nil, "timeout acquiring " .. opts.name .. " lock", "timeout"
     end
   end
 
@@ -104,7 +110,11 @@ function concurrency.with_coroutine_mutex(opts, fn)
   end
 
   if not pok then
-    return nil, ok
+    return nil, ok, "pcall"
+  end
+
+  if not ok then
+    return ok, err, "call"
   end
 
   return ok, err
